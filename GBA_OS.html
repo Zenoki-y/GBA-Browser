@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GBA OS Ultimate</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    
+    <style>
+        /* --- CORE THEME --- */
+        :root { 
+            --bg: #0a0a0a; 
+            --header: rgba(15, 15, 15, 0.95);
+            --window-bg: rgba(18, 18, 18, 0.98);
+            --accent: #ff004c; 
+            --text: #ffffff; 
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            cursor: default;
+        }
+
+        /* --- VIRTUAL CURSOR --- */
+        #virtual-cursor {
+            position: fixed; top: 50%; left: 50%; width: 24px; height: 24px;
+            pointer-events: none; z-index: 99999; display: none; 
+            filter: drop-shadow(2px 2px 2px rgba(0,0,0,0.8));
+        }
+        .cursor-arrow {
+            width: 0; height: 0;
+            border-left: 12px solid white;
+            border-right: 6px solid transparent;
+            border-bottom: 12px solid transparent;
+            transform: rotate(-15deg);
+            transition: border-left-color 0.2s;
+        }
+        .cursor-arrow.dragging {
+            border-left-color: #00ff88; transform: rotate(-15deg) scale(1.2); 
+        }
+
+        /* --- FLOATING WINDOWS --- */
+        .window {
+            position: absolute;
+            background: var(--window-bg);
+            border: 1px solid #333;
+            border-radius: 6px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.9);
+            display: none; 
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 300px;
+            backdrop-filter: blur(15px);
+            z-index: 1000;
+            transition: opacity 0.2s, transform 0.2s, width 0.2s, height 0.2s, top 0.2s, left 0.2s;
+        }
+        
+        .window.maximized {
+            top: 0 !important; left: 0 !important;
+            width: 100% !important; height: 100% !important;
+            border-radius: 0; border: none;
+        }
+
+        .window.minimized {
+            opacity: 0; pointer-events: none; transform: scale(0.8) translateY(200px);
+        }
+        
+        .win-header {
+            background: rgba(255,255,255,0.03);
+            padding: 8px 10px;
+            display: flex; align-items: center; justify-content: space-between;
+            cursor: grab; border-bottom: 1px solid rgba(255,255,255,0.05);
+            height: 25px;
+        }
+        .win-header:active { cursor: grabbing; background: var(--accent); color: black; }
+        
+        .win-title { font-size: 11px; font-weight: bold; letter-spacing: 1px; display: flex; align-items: center; gap: 8px; text-transform: uppercase;}
+        
+        .win-controls { display: flex; gap: 8px; }
+        .ctrl-btn { width: 10px; height: 10px; border-radius: 50%; cursor: pointer; }
+        .btn-min { background: #ffbd2e; }
+        .btn-max { background: #27c93f; }
+        .btn-close { background: #ff5f56; }
+        
+        .win-body { flex: 1; padding: 0; overflow: auto; min-height: 200px; position: relative; }
+
+        /* Internal Browser Styles */
+        .browser-toolbar { display: flex; padding: 5px; gap: 5px; background: #111; border-bottom: 1px solid #333; }
+        .browser-input { flex: 1; background: #222; border: none; color: white; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+        iframe { width: 100%; height: 100%; border: none; background: white; }
+
+        /* Calendar Styles */
+        #calendar-popup {
+            position: absolute; bottom: 40px; right: 10px; width: 250px;
+            background: rgba(20,20,20,0.95); border: 1px solid #333;
+            border-radius: 8px; padding: 15px; display: none; z-index: 5000;
+            backdrop-filter: blur(10px); box-shadow: 0 10px 30px black;
+        }
+        .cal-header { text-align: center; font-weight: bold; margin-bottom: 10px; color: var(--accent); }
+        .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; text-align: center; font-size: 11px; color: #ccc; }
+        .cal-day:hover { background: var(--accent); color: white; border-radius: 3px; }
+
+        /* File Explorer Styles */
+        .file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; padding: 15px; }
+        .file-item { display: flex; flex-direction: column; align-items: center; text-align: center; cursor: pointer; padding: 5px; border-radius: 4px; }
+        .file-item:hover { background: rgba(255,255,255,0.1); }
+        .file-icon { font-size: 28px; margin-bottom: 5px; }
+        .file-name { font-size: 10px; color: #ccc; word-break: break-all; }
+
+        .notepad-area { width: 100%; height: 100%; background: #111; border: none; color: #eee; resize: none; outline: none; padding: 15px; font-family: 'Consolas', monospace; box-sizing: border-box; }
+
+        /* --- WALLPAPER --- */
+        #wallpaper-layer {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1;
+            background-size: cover; background-position: center;
+            background-image: radial-gradient(circle at center, #1f1f1f 0%, #000 100%);
+        }
+        #live-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+
+        /* --- UI TOP --- */
+        .browser-top {
+            background: var(--header); backdrop-filter: blur(10px);
+            display: flex; flex-direction: column;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4); z-index: 100;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .tab-strip { display: flex; align-items: flex-end; padding: 5px 10px 0 10px; gap: 5px; overflow-x: auto; }
+        .tab {
+            background: rgba(255,255,255,0.05); color: #888; padding: 8px 15px;
+            border-radius: 8px 8px 0 0; font-size: 11px; display: flex; align-items: center;
+            gap: 8px; cursor: pointer; min-width: 100px; transition: 0.2s; border-bottom: 2px solid transparent;
+        }
+        .tab.active { background: rgba(30,30,30,0.9); color: white; border-bottom: 2px solid var(--accent); }
+        .tab-close { font-size: 14px; margin-left: auto; }
+        .new-tab-btn { padding: 5px 15px; font-size: 18px; color: #888; cursor: pointer; }
+
+        .nav-bar { background: rgba(30,30,30,0.9); padding: 8px 15px; display: flex; align-items: center; gap: 10px; }
+        .url-box {
+            flex: 1; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px; padding: 6px 15px; display: flex; align-items: center;
+        }
+        .url-text { flex: 1; outline: none; border: none; background: transparent; color: white; font-size: 12px; }
+        
+        .menu-btn { 
+            background: none; border: none; color: #ccc; font-size: 20px; cursor: pointer; 
+            width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+            border-radius: 4px; transition: 0.2s;
+        }
+        .menu-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+
+        /* --- CONTENT --- */
+        .viewport { flex: 1; position: relative; }
+        .desktop-content { display: none; height: 100%; flex-direction: column; padding: 20px; }
+        .desktop-content.active { display: flex; }
+        .desktop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 20px; }
+        
+        .icon-btn {
+            display: flex; flex-direction: column; align-items: center; text-align: center; gap: 5px;
+            cursor: pointer; padding: 10px; border-radius: 8px; transition: 0.2s;
+        }
+        .icon-btn:hover { background: rgba(255,255,255,0.1); backdrop-filter: blur(5px); }
+        .icon-img { font-size: 32px; filter: drop-shadow(0 4px 8px black); }
+        .icon-label { font-size: 11px; color: #ddd; text-shadow: 0 2px 4px black; }
+
+        .center-widget { 
+            margin-top: auto; margin-bottom: auto; text-align: center; 
+            padding-bottom: 50px; 
+        }
+        .gba-logo { 
+            font-size: 40px; font-weight: 900; color: white; 
+            text-shadow: 0 0 20px var(--accent); letter-spacing: 2px; 
+        }
+
+        /* --- TASKBAR --- */
+        .taskbar {
+            height: 35px; background: rgba(0, 0, 0, 0.9); border-top: 1px solid rgba(255,255,255,0.05);
+            display: flex; align-items: center; padding: 0 15px; z-index: 2000; backdrop-filter: blur(5px);
+        }
+        .taskbar-apps { display: flex; gap: 5px; flex: 1; margin-left: 10px; }
+        .task-item {
+            padding: 2px 10px; background: rgba(255,255,255,0.1); border-radius: 4px; 
+            font-size: 11px; color: #ccc; cursor: pointer; border-bottom: 2px solid transparent;
+            display: none; 
+        }
+        .task-item.visible { display: block; }
+        .task-item.focused { border-bottom-color: var(--accent); color: white; background: rgba(255,255,255,0.15); }
+        .sys-tray { font-size: 11px; color: #888; font-family: monospace; letter-spacing: 1px; margin-left: auto; cursor: pointer; }
+        .sys-tray:hover { color: white; }
+
+        /* --- MENUS & OVERLAYS --- */
+        .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 3000; display: none; backdrop-filter: blur(8px); }
+        .modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #111; border: 1px solid var(--accent); padding: 25px; width: 85%; max-width: 350px;
+            border-radius: 12px; text-align: center; box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            max-height: 80vh; overflow-y: auto; 
+        }
+        .color-row { display: flex; gap: 10px; margin-bottom: 10px; justify-content: center;}
+        .color-dot { width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid #333; }
+        .btn-option {
+            background: #222; border: 1px solid #444; color: white; padding: 10px; width: 100%; border-radius: 6px;
+            margin-bottom: 8px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; font-size: 12px;
+        }
+        .btn-option:hover { border-color: var(--accent); }
+        .btn-option.active { background: var(--accent); border-color: var(--accent); font-weight: bold; }
+        .slider-container { display: flex; align-items: center; gap: 10px; }
+        input[type=range] { flex: 1; accent-color: var(--accent); }
+        .btn-close { background: var(--accent); border: none; color: white; padding: 12px; width: 100%; border-radius: 6px; font-weight: bold; margin-top: 10px;}
+
+        #browser-menu {
+            position: absolute; top: 50px; right: 10px; width: 200px;
+            background: #1e1e1e; border: 1px solid #333; border-radius: 8px;
+            box-shadow: 0 10px 30px black; z-index: 4000; display: none;
+            flex-direction: column; overflow: hidden;
+        }
+        .menu-item { padding: 12px 15px; color: #ddd; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #252525; }
+        .menu-item:last-child { border-bottom: none; }
+        .menu-item:hover { background: var(--accent); color: white; }
+        .menu-icon { width: 20px; text-align: center; }
+
+        #ctx-menu {
+            position: fixed; background: #1a1a1a; border: 1px solid #333; padding: 5px 0;
+            width: 180px; display: none; flex-direction: column; z-index: 999999;
+            box-shadow: 0 10px 20px black; border-radius: 6px;
+        }
+        .ctx-item { padding: 10px 15px; font-size: 13px; color: #ccc; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+        .ctx-item:hover { background: var(--accent); color: white; }
+
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <div id="virtual-cursor"><div class="cursor-arrow" id="cursorArrow"></div></div>
+    <div id="wallpaper-layer"><video id="live-bg" loop muted autoplay playsinline></video></div>
+
+    <div class="window" id="win-files" style="top:50px; left:20px; width:320px; height:250px;">
+        <div class="win-header" onmousedown="startWinDrag(event, 'win-files')" ondblclick="toggleMaximize('win-files')">
+            <span class="win-title">📁 FILES</span>
+            <div class="win-controls">
+                <div class="ctrl-btn btn-min" onclick="minWin('win-files')"></div>
+                <div class="ctrl-btn btn-max" onclick="toggleMaximize('win-files')"></div>
+                <div class="ctrl-btn btn-close" onclick="closeWin('win-files')"></div>
+            </div>
+        </div>
+        <div class="win-body" style="background:rgba(0,0,0,0.5);">
+             <div class="file-grid" id="fileGrid"></div>
+        </div>
+    </div>
+
+    <div class="window" id="win-note" style="top:100px; left:50px; width:300px; height:300px;">
+        <div class="win-header" onmousedown="startWinDrag(event, 'win-note')" ondblclick="toggleMaximize('win-note')">
+            <span class="win-title">📝 EDITOR</span>
+            <div class="win-controls">
+                <div class="ctrl-btn btn-min" onclick="minWin('win-note')"></div>
+                <div class="ctrl-btn btn-max" onclick="toggleMaximize('win-note')"></div>
+                <div class="ctrl-btn btn-close" onclick="closeWin('win-note')"></div>
+            </div>
+        </div>
+        <div class="win-body">
+            <textarea id="notepadContent" class="notepad-area" placeholder="Type here... (Auto-saved)" oninput="saveNote()"></textarea>
+        </div>
+    </div>
+
+    <div class="window" id="win-surf" style="top:80px; left:40px; width:350px; height:400px;">
+        <div class="win-header" onmousedown="startWinDrag(event, 'win-surf')" ondblclick="toggleMaximize('win-surf')">
+            <span class="win-title">🌐 SURF</span>
+            <div class="win-controls">
+                <div class="ctrl-btn btn-min" onclick="minWin('win-surf')"></div>
+                <div class="ctrl-btn btn-max" onclick="toggleMaximize('win-surf')"></div>
+                <div class="ctrl-btn btn-close" onclick="closeWin('win-surf')"></div>
+            </div>
+        </div>
+        <div class="win-body" style="background:white; padding:0; display:flex; flex-direction:column;">
+            <div class="browser-toolbar">
+                <input type="text" class="browser-input" id="surfInput" value="https://bing.com" onkeypress="if(event.key==='Enter') document.getElementById('surfFrame').src=this.value">
+                <button class="calc-btn" onclick="document.getElementById('surfFrame').src=document.getElementById('surfInput').value">GO</button>
+            </div>
+            <iframe id="surfFrame" src="https://www.bing.com/search?q=GBA+OS"></iframe>
+        </div>
+    </div>
+
+    <div id="calendar-popup">
+        <div class="cal-header" id="calMonth"></div>
+        <div class="cal-grid" id="calGrid"></div>
+    </div>
+
+    <div class="browser-top">
+        <div class="tab-strip" id="tabStrip">
+            <div class="new-tab-btn" onclick="playSnd('click'); createNewTab()">+</div>
+        </div>
+        <div class="nav-bar">
+            <div class="url-box">
+                <span style="color:var(--accent); margin-right:8px;">🔒</span>
+                <input type="text" class="url-text" placeholder="Search or Type URL..." onkeypress="handleEnter(event)">
+            </div>
+            <button class="menu-btn" onclick="toggleBrowserMenu()">⋮</button>
+        </div>
+    </div>
+
+    <div id="browser-menu">
+        <div class="menu-item" onclick="openWin('win-files'); toggleBrowserMenu()"><span class="menu-icon">📥</span> Downloads</div>
+        <div class="menu-item" onclick="alert('History: Clear'); toggleBrowserMenu()"><span class="menu-icon">🕒</span> History</div>
+        <div class="menu-item" onclick="toggleSettings(); toggleBrowserMenu()"><span class="menu-icon">⚙️</span> Settings</div>
+        <div class="menu-item" onclick="document.documentElement.requestFullscreen(); toggleBrowserMenu()"><span class="menu-icon">⛶</span> Fullscreen</div>
+    </div>
+
+    <div class="viewport" id="viewport"></div>
+
+    <div class="taskbar">
+        <div class="taskbar-apps">
+            <div class="task-item" id="task-win-files" onclick="restoreWin('win-files')">Files</div>
+            <div class="task-item" id="task-win-note" onclick="restoreWin('win-note')">Editor</div>
+            <div class="task-item" id="task-win-surf" onclick="restoreWin('win-surf')">Surf</div>
+        </div>
+        <div class="sys-tray" id="clock" onclick="toggleCalendar()">12:00 PM</div>
+    </div>
+
+    <div class="overlay" id="settingsOverlay" onclick="toggleSettings()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h3>GBA CONTROL</h3>
+            <div class="setting-group">
+                <span class="setting-label">MOUSE & RIGGING</span>
+                <button class="btn-option" id="mouseToggleBtn" onclick="toggleMouseMode()">
+                    <span>Enable Gesture Mouse</span><span id="mouseStateText">OFF</span>
+                </button>
+                <div style="font-size:10px; color:#666;">Hold 0.8s to grab. Lift 0.2s to drop.</div>
+                <div class="slider-container" style="margin-top:10px;">
+                    <span style="font-size:10px;">SLOW</span>
+                    <input type="range" min="0.5" max="3.0" step="0.1" value="1.5" onchange="mouseSensitivity = this.value">
+                    <span style="font-size:10px;">FAST</span>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">THEME</span>
+                <div class="color-row">
+                    <div class="color-dot" style="background:#ff004c;" onclick="setTheme('#ff004c')"></div>
+                    <div class="color-dot" style="background:#00f3ff;" onclick="setTheme('#00f3ff')"></div>
+                    <div class="color-dot" style="background:#00ff88;" onclick="setTheme('#00ff88')"></div>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">WALLPAPER</span>
+                <button class="btn-option" onclick="document.getElementById('fileInput').click()"><span>📁 Select Media</span></button>
+                <input type="file" id="fileInput" hidden accept="image/*,video/*" onchange="handleFile(this)">
+            </div>
+            <button class="btn-close" onclick="toggleSettings()">CLOSE</button>
+        </div>
+    </div>
+
+    <div id="ctx-menu">
+        <div class="ctx-item" onclick="createNewTab(); hideCtx()"><span>📄</span> New Tab</div>
+        <div class="ctx-item" onclick="location.reload(); hideCtx()"><span>⟳</span> Reboot System</div>
+    </div>
+
+    <script>
+        // --- WINDOW MANAGER & SNAPPING ---
+        let highestZ = 1000;
+        let dragWin = null;
+        let winOffsetX = 0, winOffsetY = 0;
+
+        const defaultFiles = [
+            { name: "My Notes.txt", icon: "📝", type: "note" },
+            { name: "Projects", icon: "📁", type: "folder" }
+        ];
+
+        function initFileSystem() {
+            const grid = document.getElementById('fileGrid');
+            grid.innerHTML = "";
+            defaultFiles.forEach(f => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.innerHTML = `<div class="file-icon">${f.icon}</div><div class="file-name">${f.name}</div>`;
+                item.onclick = () => { 
+                    if(f.type === 'note') openWin('win-note');
+                    else alert("Folder is empty");
+                };
+                grid.appendChild(item);
+            });
+            const saved = localStorage.getItem('gx_note');
+            if(saved) document.getElementById('notepadContent').value = saved;
+        }
+
+        function saveNote() { localStorage.setItem('gx_note', document.getElementById('notepadContent').value); }
+
+        function openWin(id) {
+            const win = document.getElementById(id);
+            const task = document.getElementById('task-'+id);
+            win.style.display = 'flex'; win.classList.remove('minimized'); win.style.zIndex = ++highestZ;
+            if(task) { task.classList.add('visible'); task.classList.add('focused'); }
+            playSnd('click');
+        }
+
+        function closeWin(id) {
+            document.getElementById(id).style.display = 'none';
+            const task = document.getElementById('task-'+id);
+            if(task) { task.classList.remove('visible'); task.classList.remove('focused'); }
+        }
+
+        function minWin(id) {
+            const win = document.getElementById(id);
+            win.classList.add('minimized');
+            const task = document.getElementById('task-'+id);
+            if(task) task.classList.remove('focused');
+        }
+
+        function toggleMaximize(id) {
+            const win = document.getElementById(id);
+            win.classList.toggle('maximized');
+        }
+
+        function restoreWin(id) {
+            const win = document.getElementById(id);
+            if(win.classList.contains('minimized') || win.style.display === 'none') { openWin(id); } else { win.style.zIndex = ++highestZ; }
+        }
+
+        function startWinDrag(e, id) {
+            dragWin = document.getElementById(id);
+            if(dragWin.classList.contains('maximized')) return; // Can't drag maximized
+            dragWin.style.zIndex = ++highestZ;
+            document.querySelectorAll('.task-item').forEach(t => t.classList.remove('focused'));
+            const task = document.getElementById('task-'+id);
+            if(task) task.classList.add('focused');
+
+            const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+            const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+            winOffsetX = clientX - dragWin.offsetLeft;
+            winOffsetY = clientY - dragWin.offsetTop;
+            document.addEventListener('mousemove', onWinDrag);
+            document.addEventListener('mouseup', endWinDrag);
+        }
+
+        function onWinDrag(e) {
+            if(!dragWin) return;
+            e.preventDefault();
+            dragWin.style.left = (e.clientX - winOffsetX) + 'px';
+            dragWin.style.top = (e.clientY - winOffsetY) + 'px';
+        }
+
+        function endWinDrag() {
+            dragWin = null;
+            document.removeEventListener('mousemove', onWinDrag);
+            document.removeEventListener('mouseup', endWinDrag);
+        }
+
+        // --- CALENDAR LOGIC ---
+        function toggleCalendar() {
+            const cal = document.getElementById('calendar-popup');
+            if(cal.style.display === 'block') {
+                cal.style.display = 'none';
+            } else {
+                cal.style.display = 'block';
+                renderCalendar();
+            }
+        }
+
+        function renderCalendar() {
+            const now = new Date();
+            const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            document.getElementById('calMonth').innerText = monthNames[now.getMonth()] + " " + now.getFullYear();
+            
+            const grid = document.getElementById('calGrid');
+            grid.innerHTML = "";
+            const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+            
+            for(let i=1; i<=daysInMonth; i++) {
+                const day = document.createElement('div');
+                day.className = 'cal-day';
+                day.innerText = i;
+                if(i === now.getDate()) day.style.background = "rgba(255,255,255,0.2)";
+                grid.appendChild(day);
+            }
+        }
+
+        // --- MOUSE & GESTURE ---
+        let mouseEnabled = false; let isDragging = false; let mouseSensitivity = 1.5;
+        let cursorX = window.innerWidth/2, cursorY = window.innerHeight/2;
+        let holdTimer, releaseTimer, startX, startY, hasMoved;
+        const cursor = document.getElementById('virtual-cursor');
+        const arrow = document.getElementById('cursorArrow');
+
+        function toggleMouseMode() {
+            mouseEnabled = !mouseEnabled;
+            const btn = document.getElementById('mouseToggleBtn');
+            const txt = document.getElementById('mouseStateText');
+            if(mouseEnabled) {
+                btn.classList.add('active'); txt.innerText = "ON"; cursor.style.display = 'block';
+                cursorX = window.innerWidth/2; cursorY = window.innerHeight/2; updateCursor(); playSnd('click');
+            } else {
+                btn.classList.remove('active'); txt.innerText = "OFF"; cursor.style.display = 'none';
+                isDragging = false; arrow.classList.remove('dragging');
+            }
+        }
+        function updateCursor() { cursor.style.left = cursorX+'px'; cursor.style.top = cursorY+'px'; }
+        function simulateMouseEvent(type, x, y) {
+            const el = document.elementFromPoint(x, y);
+            if(el) el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window, clientX:x, clientY:y, button:0, buttons:1}));
+        }
+
+        document.addEventListener('touchstart', (e) => {
+            if(!mouseEnabled || e.target.closest('.overlay')) return;
+            e.preventDefault(); startX=e.touches[0].clientX; startY=e.touches[0].clientY; 
+            hasMoved=false; touchStartTime=Date.now();
+            if(releaseTimer) { clearTimeout(releaseTimer); releaseTimer=null; return; }
+            if(!isDragging) holdTimer = setTimeout(activateDrag, 800);
+        }, {passive:false});
+
+        document.addEventListener('touchmove', (e) => {
+            if(!mouseEnabled || e.target.closest('.overlay')) return;
+            e.preventDefault();
+            const tx = e.touches[0].clientX; const ty = e.touches[0].clientY;
+            const mx = tx-startX; const my = ty-startY;
+            if(Math.abs(mx)>5 || Math.abs(my)>5) hasMoved=true;
+            if(holdTimer && hasMoved) { clearTimeout(holdTimer); holdTimer=null; }
+            cursorX += mx*mouseSensitivity; cursorY += my*mouseSensitivity;
+            cursorX = Math.max(0, Math.min(window.innerWidth, cursorX)); cursorY = Math.max(0, Math.min(window.innerHeight, cursorY));
+            updateCursor();
+            if(isDragging) simulateMouseEvent('mousemove', cursorX, cursorY);
+            startX=tx; startY=ty;
+        }, {passive:false});
+
+        document.addEventListener('touchend', (e) => {
+            if(!mouseEnabled || e.target.closest('.overlay')) return;
+            if(holdTimer) { clearTimeout(holdTimer); holdTimer=null; }
+            if(!isDragging && !releaseTimer) {
+                if(Date.now()-touchStartTime < 300 && !hasMoved) {
+                    simulateMouseEvent('click', cursorX, cursorY);
+                    const el = document.elementFromPoint(cursorX, cursorY);
+                    if(el && (el.tagName==='INPUT' || el.tagName==='TEXTAREA')) el.focus();
+                }
+            }
+            if(isDragging) releaseTimer = setTimeout(() => { deactivateDrag(); releaseTimer=null; }, 200);
+        });
+
+        function activateDrag() { isDragging=true; arrow.classList.add('dragging'); playSnd('click'); simulateMouseEvent('mousedown', cursorX, cursorY); }
+        function deactivateDrag() { isDragging=false; arrow.classList.remove('dragging'); simulateMouseEvent('mouseup', cursorX, cursorY); }
+
+        // --- SYSTEM ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playSnd(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        window.onload = function() {
+            initFileSystem();
+        };
+        setInterval(() => { document.getElementById('clock').innerText = "SYS :: " + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}); }, 1000);
+        
+        // TABS & UI
+        let tabCount = 0; loadSettings(); createNewTab();
+        function createNewTab() {
+            tabCount++; const id = 'tab-'+tabCount;
+            const btn = document.createElement('div'); btn.className='tab active'; btn.id='btn-'+id;
+            btn.innerHTML=`<span>Desktop ${tabCount}</span><div class="tab-close" onclick="closeTab('${id}', event)">×</div>`;
+            btn.onclick=()=>{playSnd('click'); switchTab(id);};
+            document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+            document.querySelectorAll('.desktop-content').forEach(c=>c.classList.remove('active'));
+            document.getElementById('tabStrip').insertBefore(btn, document.querySelector('.new-tab-btn'));
+            
+            const content = document.createElement('div'); content.className='desktop-content active'; content.id=id;
+            content.innerHTML=`
+                <div class="desktop-grid">
+                    <div class="icon-btn" onclick="openWin('win-files')"><span class="icon-img">📁</span><span class="icon-label">Files</span></div>
+                    <div class="icon-btn" onclick="openWin('win-note')"><span class="icon-img">📝</span><span class="icon-label">Editor</span></div>
+                    <div class="icon-btn" onclick="openWin('win-surf')"><span class="icon-img">🌐</span><span class="icon-label">Surf</span></div>
+                    <div class="icon-btn" onclick="window.location.href='https://discord.com/app'"><span class="icon-img">💬</span><span class="icon-label">Discord</span></div>
+                    <div class="icon-btn" onclick="window.location.href='https://youtube.com'"><span class="icon-img">▶️</span><span class="icon-label">YouTube</span></div>
+                </div>
+                <div class="center-widget"><div class="gba-logo">GBA OS</div><div style="font-size:11px; color:#666;">READY</div></div>
+            `;
+            document.getElementById('viewport').appendChild(content);
+        }
+        function switchTab(id) {
+            document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); document.querySelectorAll('.desktop-content').forEach(c=>c.classList.remove('active'));
+            document.getElementById('btn-'+id).classList.add('active'); document.getElementById(id).classList.add('active');
+        }
+        function closeTab(id, e) {
+            e.stopPropagation(); playSnd('click');
+            const btn=document.getElementById('btn-'+id); const content=document.getElementById(id);
+            if(btn) btn.remove(); if(content) content.remove();
+            if(!document.querySelector('.tab')) createNewTab(); else document.querySelectorAll('.tab')[document.querySelectorAll('.tab').length-1].click();
+        }
+        function toggleSettings() { const el=document.getElementById('settingsOverlay'); el.style.display=(el.style.display==='block')?'none':'block'; }
+        
+        function toggleBrowserMenu() {
+            const menu = document.getElementById('browser-menu');
+            menu.style.display = (menu.style.display === 'flex') ? 'none' : 'flex';
+        }
+
+        function setTheme(color) { playSnd('click'); document.documentElement.style.setProperty('--accent', color); localStorage.setItem('gx_accent', color); }
+        function handleFile(input) { if(input.files[0]) updateWallpaper(URL.createObjectURL(input.files[0]), input.files[0].type.startsWith('video')); }
+        function updateWallpaper(url, isVideo) {
+            const v=document.getElementById('live-bg'); const l=document.getElementById('wallpaper-layer');
+            if(isVideo) { v.src=url; v.style.display='block'; v.play(); l.style.backgroundImage='none'; }
+            else { v.style.display='none'; v.pause(); l.style.backgroundImage=`url('${url}')`; }
+            if(!url.startsWith('blob:')) localStorage.setItem('gx_bg', url);
+        }
+        function loadSettings() {
+            const c=localStorage.getItem('gx_accent'); const bg=localStorage.getItem('gx_bg');
+            if(c) setTheme(c); if(bg) updateWallpaper(bg, bg.includes('.mp4'));
+        }
+        function handleEnter(e) { if(e.key==='Enter') window.location.href="https://www.google.com/search?q="+encodeURIComponent(e.target.value); }
+        
+        window.oncontextmenu = function(e) { e.preventDefault(); const m=document.getElementById('ctx-menu'); m.style.display='flex'; m.style.left=(mouseEnabled?cursorX:e.clientX)+'px'; m.style.top=(mouseEnabled?cursorY:e.clientY)+'px'; };
+        window.onclick = function(e) { 
+            if(!e.target.closest('.menu-btn')) document.getElementById('browser-menu').style.display='none';
+            document.getElementById('ctx-menu').style.display='none'; 
+            if(!e.target.closest('#clock') && !e.target.closest('#calendar-popup')) document.getElementById('calendar-popup').style.display='none';
+        };
+        function hideCtx() { document.getElementById('ctx-menu').style.display='none'; }
+    </script>
+</body>
+</html>
